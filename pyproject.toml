@@ -1,0 +1,44 @@
+[project]
+name = "netbox-utils"
+version = "0.1.0"
+description = "Tools and library for interacting with Netbox"
+readme = "README.md"
+requires-python = ">=3.6.8"
+
+dependencies = ["coloredlogs>=7.3", "pynetbox==7.5.0", "requests>=2.27.1"]
+
+[project.scripts]
+netbox-import = "netbox_utils.netbox_dump_subnetdata:main"
+netbox-dump = "netbox_utils.netbox2aquilon:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=4.6.9",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.0.0",
+    "ruff>=0.0.17",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--cov=src --cov-branch --cov-report=xml:coverage.xml --cov-report=term-missing"
+
+[tool.pyright]
+pythonVersion = "3.6"
+typeCheckingMode = "basic"
+ignore = ["pynetbox"]
+
+[tool.ruff.lint]
+select = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
