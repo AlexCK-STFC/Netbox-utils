@@ -9,7 +9,8 @@ import subprocess
 import sys
 
 import coloredlogs
-import pynetbox
+from pynetbox.models.dcim import Devices
+from pynetbox.models.virtualization import VirtualMachines
 
 from netbox_utils.scd_netbox import SCDNetbox
 
@@ -114,12 +115,12 @@ class Netbox2Aquilon(SCDNetbox):
         rack = self.get_rack_from_device(device)
 
         rack_delimeter = "-"  # Default naming convention for new racks
-        if "magdb2netbox" in [t.slug for t in rack.tags]:
+        if "magdb2netbox" in [t.slug for t in rack.tags]:  # type: ignore
             rack_delimeter = (
                 "rack"  # Preserve magdb2aquilon style names for migrated racks
             )
 
-        rack_name = rack_delimeter.join([device.site.slug, rack.facility_id])
+        rack_name = rack_delimeter.join([device.site.slug, rack.facility_id])  # type: ignore
 
         cmds.append(
             [
@@ -136,8 +137,7 @@ class Netbox2Aquilon(SCDNetbox):
         return cmds
 
     def _netbox_copy_vm_disks(self, virtual_machine):
-        """
-        Check if VM has any new-style virtual disks defined,
+        """Check if VM has any new-style virtual disks defined,
         If so, use them and set the first as bootable,
         If not, fall back to the classic single bootable disk method.
         """
@@ -192,8 +192,8 @@ class Netbox2Aquilon(SCDNetbox):
         # Use name of cluster by default, unless another name has been specified
         cluster_name = virtual_machine.cluster.name.lower().replace(" ", "_")
         cluster = self.netbox.virtualization.clusters.get(virtual_machine.cluster.id)
-        if "aq_name" in cluster.custom_fields:
-            cluster_name = cluster.custom_fields["aq_name"]
+        if "aq_name" in cluster.custom_fields:  # type: ignore
+            cluster_name = cluster.custom_fields["aq_name"]  # type: ignore
 
         cmds.append(
             [
@@ -203,13 +203,13 @@ class Netbox2Aquilon(SCDNetbox):
                 "--vendor",
                 "virtual",
                 "--model",
-                f"vm-{cluster.type.slug}",
+                f"vm-{cluster.type.slug}",  # type: ignore
                 "--cluster",
                 f"{cluster_name}",
                 "--cpuname",
-                f'{self.config["aquilon"]["cpuname"]}',
+                f"{self.config['aquilon']['cpuname']}",
                 "--cpuspeed",
-                f'{self.config["aquilon"]["cpuspeed"]}',
+                f"{self.config['aquilon']['cpuspeed']}",
                 "--cpucount",
                 f"{int(virtual_machine.vcpus)}",
                 "--memory",
@@ -226,12 +226,12 @@ class Netbox2Aquilon(SCDNetbox):
         interfaces = self.get_interfaces_from_device(device)
         for interface in interfaces:
             is_boot_interface = False
-            for tag in interface.tags:
+            for tag in interface.tags:  # type: ignore
                 if tag.slug == "bootable":
                     is_boot_interface = True
 
             is_lag_interface = (
-                hasattr(interface, "type") and interface.type.value == "lag"
+                hasattr(interface, "type") and interface.type.value == "lag"  # type: ignore
             )
 
             cmd = [
@@ -296,7 +296,7 @@ class Netbox2Aquilon(SCDNetbox):
                 # Don't add the primary IP as add_host does this
                 if address.address != device.primary_ip4.address:
                     # Remove prefix length as aquilon gets this from the network definition
-                    address.address = address.address.split("/")[0]
+                    address.address = address.address.split("/")[0]  # type: ignore
                     cmd = [
                         "add_interface_address",
                         "--machine",
@@ -364,17 +364,17 @@ class Netbox2Aquilon(SCDNetbox):
 
         # Preserve MagDB style machine naming for migrated hosts
         # Add a property to the object to store the desired aquilon machine name
-        device.aq_machine_name = None
-        if "magdb2netbox" in [t.slug for t in device.tags]:
-            device.aq_machine_name = f'system{device.custom_fields["magdb_system_id"]}'
+        device.aq_machine_name = None  # type: ignore
+        if "magdb2netbox" in [t.slug for t in device.tags]:  # type: ignore
+            device.aq_machine_name = f"system{device.custom_fields['magdb_system_id']}"  # type: ignore
 
-        if isinstance(device, pynetbox.models.dcim.Devices):
+        if isinstance(device, Devices):
             if device.aq_machine_name is None:
-                device.aq_machine_name = f"netbox-{device.id}"
+                device.aq_machine_name = f"netbox-{device.id}"  # type: ignore
             cmds = self._netbox_copy_device(device)
-        elif isinstance(device, pynetbox.models.virtualization.VirtualMachines):
+        elif isinstance(device, VirtualMachines):
             if device.aq_machine_name is None:
-                device.aq_machine_name = f"netboxvm-{device.id}"
+                device.aq_machine_name = f"netboxvm-{device.id}"  # type: ignore
             cmds = self._netbox_copy_vm(device)
         else:
             logging.error('Unsupported device type to copy "%s"', type(device))
@@ -395,13 +395,13 @@ class Netbox2Aquilon(SCDNetbox):
             [
                 "add_host",
                 "--hostname",
-                f"{device.primary_ip4.dns_name}",
+                f"{device.primary_ip4.dns_name}",  # type: ignore
                 "--machine",
                 f"{device.aq_machine_name}",
                 "--archetype",
                 f"{opts.archetype}",
                 "--ip",
-                f'{device.primary_ip4.address.split("/")[0]}',
+                f"{device.primary_ip4.address.split('/')[0]}",  # type: ignore
                 "--personality",
                 f"{personality}",
                 f"--{aqdesttype}",

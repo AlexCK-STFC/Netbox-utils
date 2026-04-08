@@ -5,26 +5,38 @@ Test cases for netbox2aquilon
 # pylint: disable=protected-access,missing-function-docstring
 
 import json
-from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import mock_open, patch
 
-import tests.testdata as testdata
+import pytest
+
 from netbox_utils.netbox_dump_subnetdata import NetboxDumpSubnetdata
 
-FAKE = testdata.load_data()
+
+@pytest.fixture
+def mock_dump_subnet_data(mocker):
+    mocker.patch("os.path.isfile", return_value=True)
+
+    def mock_read(instance, filenames, **kwargs):
+        instance.read_dict({"netbox": {"url": "http://test", "token": "xyz"}})
+        return filenames
+
+    mocker.patch("configparser.ConfigParser.read", side_effect=mock_read, autospec=True)
+
+    mock_obj = NetboxDumpSubnetdata()
+
+    mocker.patch.object(mock_obj, "_validate_config")
+
+    return mock_obj
 
 
-def test__get_subnet_fields(mocker):
-    test_obj = NetboxDumpSubnetdata()
-
-    test_obj.netbox.ipam.prefixes = SimpleNamespace()
-    test_obj.netbox.ipam.prefixes.filter = mocker.MagicMock(
-        return_value=deepcopy(FAKE.PREFIXES_IPV4)
+def test__get_subnet_fields(mocker, make_nb_obj, mock_dump_subnet_data):
+    mock_dump_subnet_data.netbox.ipam.prefixes = SimpleNamespace()
+    mock_dump_subnet_data.netbox.ipam.prefixes.filter = mocker.MagicMock(
+        return_value=make_nb_obj("PREFIXES_IPV4", index=...)
     )
 
-    subnets = test_obj._get_subnet_fields()
+    subnets = mock_dump_subnet_data._get_subnet_fields()
     assert len(subnets) == 5
     print(subnets)
     assert {s["SubnetAddress"] for s in subnets} == {
@@ -36,47 +48,34 @@ def test__get_subnet_fields(mocker):
     }
 
 
-def test_write_subnetdata_txt(mocker):
-    test_obj = NetboxDumpSubnetdata()
-
-    test_obj.netbox.ipam.prefixes = SimpleNamespace()
-    test_obj.netbox.ipam.prefixes.filter = mocker.MagicMock(
-        return_value=deepcopy(FAKE.PREFIXES_IPV4)
+@pytest.mark.parametrize("method", ["txt", "json"])
+def test_write_subnetdata_output(mocker, make_nb_obj, mock_dump_subnet_data, method):
+    mock_dump_subnet_data.netbox.ipam.prefixes = SimpleNamespace()
+    mock_dump_subnet_data.netbox.ipam.prefixes.filter = mocker.MagicMock(
+        return_value=make_nb_obj("PREFIXES_IPV4", index=...)
     )
 
-    with patch("builtins.open", mock_open(read_data="data")) as mock_file:
-        test_obj.write_subnetdata_txt("/tmp/fake_place")
-    mock_file.assert_called_with(
-        "/tmp/fake_place/subnetdata.txt", "w", encoding="utf-8"
+    # Load expected data for comparison
+    data_dir = Path(__file__).parent / "testdata"
+    file_path = data_dir / f"subnetdata.{method}"
+
+    mock_file = mocker.mock_open()
+    mocker.patch("netbox_utils.netbox_dump_subnetdata.open", mock_file)
+
+    if method == "txt":
+        with open(file_path, encoding="utf-8") as f:
+            expected = f.readlines()
+        mock_dump_subnet_data.write_subnetdata_txt("/tmp/fake_place")
+        handle = mock_file()
+        handle.writelines.assert_called_once_with(expected)
+    else:
+        with open(file_path, encoding="utf-8") as f:
+            expected = json.load(f)
+        json_dump_mock = mocker.patch.object(json, "dump")
+        mock_dump_subnet_data.write_subnetdata_json("/tmp/fake_place")
+        handle = mock_file()
+        json_dump_mock.assert_called_with(expected, handle)
+
+    mock_file.assert_any_call(
+        f"/tmp/fake_place/subnetdata.{method}", "w", encoding="utf-8"
     )
-
-    handle = mock_file()
-    with open(
-        Path(__file__).parent / "testdata/subnetdata.txt", "r", encoding="utf-8"
-    ) as test_subnetdata:
-        handle.writelines.assert_called_once_with(test_subnetdata.readlines())
-
-
-def test_write_subnetdata_json(mocker):
-    test_obj = NetboxDumpSubnetdata()
-
-    test_obj.netbox.ipam.prefixes = SimpleNamespace()
-    test_obj.netbox.ipam.prefixes.filter = mocker.MagicMock(
-        return_value=deepcopy(FAKE.PREFIXES_IPV4)
-    )
-
-    with open(
-        Path(__file__).parent / "testdata/subnetdata.json", "r", encoding="utf-8"
-    ) as test_subnetdata_file:
-        test_subnetdata = json.load(test_subnetdata_file)
-
-    mock_dump = mocker.patch.object(json, "dump")
-    with patch("builtins.open", mock_open(read_data="data")) as mock_file:
-        test_obj.write_subnetdata_json("/tmp/fake_place")
-
-    mock_file.assert_called_with(
-        "/tmp/fake_place/subnetdata.json", "w", encoding="utf-8"
-    )
-
-    mock_file_handle = mock_file()
-    mock_dump.assert_called_with(test_subnetdata, mock_file_handle)

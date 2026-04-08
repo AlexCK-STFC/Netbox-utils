@@ -8,15 +8,29 @@ import subprocess
 from copy import deepcopy
 from types import SimpleNamespace
 
-import tests.testdata as testdata
+import pytest
+
 from netbox_utils.netbox2aquilon import Netbox2Aquilon
 
-FAKE = testdata.load_data()
+
+@pytest.fixture
+def mock_netbox2aquilon(mocker):
+    mocker.patch("os.path.isfile", return_value=True)
+
+    def mock_read(instance, filenames, **kwargs):
+        instance.read_dict({"netbox": {"url": "http://test", "token": "xyz"}})
+        return filenames
+
+    mocker.patch("configparser.ConfigParser.read", side_effect=mock_read, autospec=True)
+
+    mock_obj = Netbox2Aquilon()
+
+    mocker.patch.object(mock_obj, "_validate_config")
+
+    return mock_obj
 
 
-def test_get_current_sandbox(mocker):
-    test_obj = Netbox2Aquilon()
-
+def test_get_current_sandbox(mocker, mock_netbox2aquilon):
     # git rev-parse succeeds
     mocker.patch.object(
         subprocess,
@@ -27,7 +41,7 @@ def test_get_current_sandbox(mocker):
             stderr=b"",
         ),
     )
-    assert test_obj.get_current_sandbox() == "abc12345/my_sandbox"
+    assert mock_netbox2aquilon.get_current_sandbox() == "abc12345/my_sandbox"
 
     # git rev-parse succeeds, but the path returned isn't deep enough to be a sandbox
     mocker.patch.object(
@@ -39,7 +53,7 @@ def test_get_current_sandbox(mocker):
             stderr=b"",
         ),
     )
-    assert test_obj.get_current_sandbox() is None
+    assert mock_netbox2aquilon.get_current_sandbox() is None
 
     # git rev-parse fails
     mocker.patch.object(
@@ -51,18 +65,16 @@ def test_get_current_sandbox(mocker):
             stderr=b"fatal: Not a git repository (or any parent up to mount point /var/quattor)",
         ),
     )
-    assert test_obj.get_current_sandbox() is None
+    assert mock_netbox2aquilon.get_current_sandbox() is None
 
 
-def test__netbox_copy_interfaces(mocker):
-    test_obj = Netbox2Aquilon()
-
+def test__netbox_copy_interfaces(mocker, mock_netbox2aquilon, make_nb_obj):
     # Physical devices with a management interface
     fake_device = SimpleNamespace(
         aq_machine_name="system7592",
     )
-    test_obj.get_interfaces_from_device = mocker.MagicMock(
-        return_value=deepcopy(FAKE.INTERFACES_PHYSICAL[:-1])
+    mock_netbox2aquilon.get_interfaces_from_device = mocker.MagicMock(
+        return_value=deepcopy(make_nb_obj("INTERFACES_PHYSICAL", index=...)[:-1])
     )
 
     add_interface_base_cmd = ["add_interface", "--machine", "system7592"]
@@ -97,7 +109,7 @@ def test__netbox_copy_interfaces(mocker):
         "--boot",
     ]
 
-    cmds = test_obj._netbox_copy_interfaces(fake_device)
+    cmds = mock_netbox2aquilon._netbox_copy_interfaces(fake_device)
 
     assert len(cmds) == 4
     assert add_bmc0 in cmds
@@ -111,8 +123,8 @@ def test__netbox_copy_interfaces(mocker):
     fake_device = SimpleNamespace(
         aq_machine_name="system6690",
     )
-    test_obj.get_interfaces_from_device = mocker.MagicMock(
-        return_value=deepcopy(FAKE.INTERFACES_VIRTUAL)
+    mock_netbox2aquilon.get_interfaces_from_device = mocker.MagicMock(
+        return_value=make_nb_obj("INTERFACES_VIRTUAL", index=...)
     )
     add_eth0 = [
         "add_interface",
@@ -141,7 +153,7 @@ def test__netbox_copy_interfaces(mocker):
         "--boot",
     ]
 
-    cmds = test_obj._netbox_copy_interfaces(fake_device)
+    cmds = mock_netbox2aquilon._netbox_copy_interfaces(fake_device)
 
     assert len(cmds) == 3
     assert add_eth0 in cmds
@@ -154,14 +166,14 @@ def test__netbox_copy_interfaces(mocker):
     fake_device = SimpleNamespace(
         aq_machine_name="system8211",
     )
-    test_obj.get_interfaces_from_device = mocker.MagicMock(
-        return_value=deepcopy(FAKE.INTERFACES_PHYSICAL_LAGS)
+    mock_netbox2aquilon.get_interfaces_from_device = mocker.MagicMock(
+        return_value=make_nb_obj("INTERFACES_PHYSICAL_LAGS", index=...)
     )
 
     add_interface_base_cmd = ["add_interface", "--machine", "system8211"]
     update_interface_base_cmd = ["update_interface", "--machine", "system8211"]
 
-    cmds = test_obj._netbox_copy_interfaces(fake_device)
+    cmds = mock_netbox2aquilon._netbox_copy_interfaces(fake_device)
 
     assert len(cmds) == 12
 
@@ -206,27 +218,25 @@ def test__netbox_copy_interfaces(mocker):
     # assert cmds.index(add_eth0) < cmds.index(update_eth0)
 
 
-def test__netbox_copy_addresses(mocker):
-    test_obj = Netbox2Aquilon()
-
-    fake_device = FAKE.DEVICE_PHYSICAL
+def test__netbox_copy_addresses(mocker, mock_netbox2aquilon, make_nb_obj):
+    fake_device = make_nb_obj("DEVICE_PHYSICAL")
     fake_device.aq_machine_name = "system7592"
 
     # No addresses on an interface
-    test_obj.get_interfaces_from_device = mocker.MagicMock(
-        return_value=[deepcopy(FAKE.INTERFACES_PHYSICAL)[1]]
+    mock_netbox2aquilon.get_interfaces_from_device = mocker.MagicMock(
+        return_value=fake_device
     )
-    test_obj.get_addresses_from_interface = mocker.MagicMock(return_value=[])
-    assert not test_obj._netbox_copy_addresses(fake_device)
+    mock_netbox2aquilon.get_addresses_from_interface = mocker.MagicMock(return_value=[])
+    assert not mock_netbox2aquilon._netbox_copy_addresses(fake_device)
 
     # Addresses on an interface
-    test_obj.get_interfaces_from_device = mocker.MagicMock(
-        return_value=[deepcopy(FAKE.INTERFACES_PHYSICAL[1])]
+    mock_netbox2aquilon.get_interfaces_from_device = mocker.MagicMock(
+        return_value=[make_nb_obj("INTERFACES_PHYSICAL", index=1)]
     )
-    test_obj.get_addresses_from_interface = mocker.MagicMock(
-        return_value=deepcopy(FAKE.ADDRESSES_IPV4)
+    mock_netbox2aquilon.get_addresses_from_interface = mocker.MagicMock(
+        return_value=make_nb_obj("ADDRESSES_IPV4", index=...)
     )
-    assert test_obj._netbox_copy_addresses(fake_device) == [
+    assert mock_netbox2aquilon._netbox_copy_addresses(fake_device) == [
         [
             "add_interface_address",
             "--machine",
@@ -241,13 +251,11 @@ def test__netbox_copy_addresses(mocker):
     ]
 
 
-def test__netbox_get_personality(mocker):
-    test_obj = Netbox2Aquilon()
-
+def test__netbox_get_personality(mocker, mock_netbox2aquilon, make_nb_obj):
     fake_devices = [
         # Tuple containing the device object and the name of role attribute in this device type
-        (deepcopy(FAKE.DEVICE_PHYSICAL), "device_role"),
-        (deepcopy(FAKE.DEVICE_VIRTUAL), "role"),
+        (make_nb_obj("DEVICE_PHYSICAL"), "device_role"),
+        (make_nb_obj("DEVICE_PHYSICAL"), "role"),
     ]
 
     # Test with devices that present as physical and virtual
@@ -263,12 +271,13 @@ def test__netbox_get_personality(mocker):
         for opt in (None, "dave"):
             # All combinations of role and tenant, pretending that aquilon will accept any personality
             # Should return 'inventory' unless both role and tenant are set
-            test_obj._call_aq = mocker.MagicMock(return_value=0)
+            mock_netbox2aquilon._call_aq = mocker.MagicMock(return_value=0)
 
             setattr(dev, role_attr, None)
             dev.tenant = None
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt) == opt
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
+                == opt
                 if opt
                 else "inventory"
             )
@@ -276,7 +285,8 @@ def test__netbox_get_personality(mocker):
             setattr(dev, role_attr, SimpleNamespace(slug="roland"))
             dev.tenant = None
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt) == opt
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
+                == opt
                 if opt
                 else "inventory"
             )
@@ -284,7 +294,8 @@ def test__netbox_get_personality(mocker):
             setattr(dev, role_attr, None)
             dev.tenant = SimpleNamespace(slug="tennant")
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt) == opt
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
+                == opt
                 if opt
                 else "inventory"
             )
@@ -292,46 +303,46 @@ def test__netbox_get_personality(mocker):
             setattr(dev, role_attr, SimpleNamespace(slug="roland"))
             dev.tenant = SimpleNamespace(slug="tennant")
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt) == opt
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
+                == opt
                 if opt
                 else "roland-tennant"
             )
 
             # All combinations of role and tenant, pretending that aquilon will not accept anything
             # Should always return 'inventory'
-            test_obj._call_aq = mocker.MagicMock(return_value=1)
+            mock_netbox2aquilon._call_aq = mocker.MagicMock(return_value=1)
 
             setattr(dev, role_attr, None)
             dev.tenant = None
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt)
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
                 == "inventory"
             )
 
             setattr(dev, role_attr, SimpleNamespace(slug="roland"))
             dev.tenant = None
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt)
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
                 == "inventory"
             )
 
             setattr(dev, role_attr, None)
             dev.tenant = SimpleNamespace(slug="tennant")
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt)
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
                 == "inventory"
             )
 
             setattr(dev, role_attr, SimpleNamespace(slug="roland"))
             dev.tenant = SimpleNamespace(slug="tennant")
             assert (
-                test_obj._netbox_get_personality(dev, "fake_archetype", opt)
+                mock_netbox2aquilon._netbox_get_personality(dev, "fake_archetype", opt)
                 == "inventory"
             )
 
 
-def test__undo_cmds():
-    test_obj = Netbox2Aquilon()
+def test__undo_cmds(mock_netbox2aquilon):
 
     cmds_forward = [
         [
@@ -466,20 +477,19 @@ def test__undo_cmds():
         ],
     ]
 
-    assert test_obj._undo_cmds(cmds_forward) == cmds_reverse
+    assert mock_netbox2aquilon._undo_cmds(cmds_forward) == cmds_reverse
 
 
-def test__netbox_copy_vm_disks(mocker):
-    test_obj = Netbox2Aquilon()
+def test__netbox_copy_vm_disks(mocker, mock_netbox2aquilon, make_nb_obj):
 
-    test_obj.get_disks_from_device = mocker.MagicMock(
-        return_value=deepcopy(FAKE.DISKS_VIRTUAL)
+    mock_netbox2aquilon.get_disks_from_device = mocker.MagicMock(
+        return_value=make_nb_obj("DISKS_VIRTUAL", index=...)
     )
 
-    fake_device = FAKE.DEVICE_VIRTUAL
+    fake_device = make_nb_obj("DEVICE_VIRTUAL")
     fake_device.aq_machine_name = "netboxvm-243"
 
-    cmds = test_obj._netbox_copy_vm_disks(fake_device)
+    cmds = mock_netbox2aquilon._netbox_copy_vm_disks(fake_device)
 
     assert cmds == [
         [
